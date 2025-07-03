@@ -16,7 +16,7 @@ class SegmentRequest(BaseModel):
     max_chunk_length: Optional[int] = None
 
 @app.get("/")
-def segment_post(content: str = ""):
+def segment_get(content: str = ""):
     if not content:
         return Response(content="LLM Platform Segmenter", media_type="text/html")
     
