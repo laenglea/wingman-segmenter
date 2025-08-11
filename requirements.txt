@@ -1,3 +1,4 @@
-fastapi
-semantic-text-splitter==0.25.0
-uvicorn
+grpcio
+grpcio-tools
+grpcio-reflection
+semantic-text-splitter==0.27.0

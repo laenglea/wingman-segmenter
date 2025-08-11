@@ -1,45 +1,32 @@
 import re
-import uvicorn
+import grpc
 
-from typing import Optional
-from fastapi import FastAPI, Response
-from pydantic import BaseModel
+from concurrent import futures
+from grpc_reflection.v1alpha import reflection
+
 from semantic_text_splitter import MarkdownSplitter, TextSplitter
 
-app = FastAPI(
-    title="LLM Platform Segmenter"
-)
+import segmenter_pb2
+import segmenter_pb2_grpc
 
-class SegmentRequest(BaseModel):
-    content: str
+class SegmenterServicer(segmenter_pb2_grpc.SegmenterServicer):
+    def Segment(self, request: segmenter_pb2.SegmentRequest, context: grpc.aio.ServicerContext):
+        file = request.file
 
-    max_chunk_length: Optional[int] = None
+        text = file.content.decode('utf-8') if file.content else ""
+        
+        capacity = request.segment_length if request.segment_length > 0 else 1000
+        overlap = request.segment_overlap if request.segment_overlap > 0 else 0
 
-@app.get("/")
-def segment_get(content: str = ""):
-    if not content:
-        return Response(content="LLM Platform Segmenter", media_type="text/html")
-    
-    return segment(content)
-
-@app.post("/")
-def segment_post(request: SegmentRequest):
-    return segment(request.content,  request.max_chunk_length)
-
-def segment(content: str, capacity: Optional[int] = None):
-    if capacity is None:
-        capacity = 1000
-
-    if is_markdown(content):
-        splitter = MarkdownSplitter(capacity)
-        chunks = splitter.chunks(content)
-    else:
-        splitter = TextSplitter(capacity)
-        chunks = splitter.chunks(content) 
-
-    return {
-        "chunks": chunks
-    }
+        if is_markdown(text):
+            splitter = MarkdownSplitter(capacity, overlap)
+            chunks = splitter.chunks(text)
+        else:
+            splitter = TextSplitter(capacity, overlap)
+            chunks = splitter.chunks(text)
+        
+        segments = [segmenter_pb2.Segment(text=chunk) for chunk in chunks]
+        return segmenter_pb2.SegmentResponse(segments=segments)
 
 def is_markdown(text):
     patterns = [
@@ -59,5 +46,24 @@ def is_markdown(text):
     
     return bool(re.search('|'.join(patterns), text, flags=re.MULTILINE))
 
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+def serve():
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+
+    segmenter = SegmenterServicer()
+    segmenter_pb2_grpc.add_SegmenterServicer_to_server(segmenter, server)
+
+    SERVICE_NAMES = (
+        segmenter_pb2.DESCRIPTOR.services_by_name['Segmenter'].full_name,
+        reflection.SERVICE_NAME,
+    )
+
+    reflection.enable_server_reflection(SERVICE_NAMES, server)
+
+    server.add_insecure_port('[::]:50051')
+    server.start()
+
+    print("Wingman Segmenter started. Listening on port 50051.")
+    server.wait_for_termination()
+
+if __name__ == '__main__':
+    serve()
